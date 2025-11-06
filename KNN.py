@@ -1,62 +1,55 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import OrdinalEncoder, LabelEncoder, StandardScaler
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score
 
 def knn(animal, sym1, sym2, sym3):
-
-    data = pd.read_csv("animal_disease_dataset_up.csv")
-
-    label_encoders = {}
-    for col in ['Animal', 'Symptom 1', 'Symptom 2', 'Symptom 3', 'Disease']:
-        le = LabelEncoder()
-        data[col] = le.fit_transform(data[col])
-        label_encoders[col] = le
-
+    data = pd.read_csv("expanded_animal_disease_dataset.csv").dropna().drop_duplicates()
 
     X = data[['Animal', 'Symptom 1', 'Symptom 2', 'Symptom 3']]
     y = data['Disease']
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
 
-    k = 5
-    max_k = 20
-    model = None
-    confidence = 0
+    encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
+    X_encoded = encoder.fit_transform(X)
 
-    try:
-        animal_code = label_encoders['Animal'].transform([animal])[0]
-        s1_code = label_encoders['Symptom 1'].transform([sym1])[0]
-        s2_code = label_encoders['Symptom 2'].transform([sym2])[0]
-        s3_code = label_encoders['Symptom 3'].transform([sym3])[0]
-    except ValueError:
-        return {"error": "Invalid input. One or more entries not found in training data."}
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_encoded, y_encoded, test_size=0.2, random_state=42
+    )
 
-    input_data = pd.DataFrame([[animal_code, s1_code, s2_code, s3_code]],
-                              columns=['Animal', 'Symptom 1', 'Symptom 2', 'Symptom 3'])
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
-    while k <= max_k:
-        knn_model = KNeighborsClassifier(n_neighbors=k, metric='euclidean')
-        knn_model.fit(X_train, y_train)
+    input_df = pd.DataFrame([[animal, sym1, sym2, sym3]], columns=X.columns)
+    input_encoded = encoder.transform(input_df)
+    input_scaled = scaler.transform(input_encoded)
 
-        y_pred = knn_model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred) * 100
+    params = {
+        'n_neighbors': [3, 5, 7, 9],
+        'weights': ['distance', 'uniform'],
+        'metric': ['euclidean', 'manhattan']
+    }
 
-        
-        prediction = knn_model.predict(input_data)
-        probabilities = knn_model.predict_proba(input_data)
-        confidence = probabilities.max() * 100
+    grid = GridSearchCV(KNeighborsClassifier(), params, cv=5)
+    grid.fit(X_train, y_train)
+    knn_model = grid.best_estimator_
 
-        if confidence >= 80:
-            model = knn_model
-            break
-        k += 1
+    y_pred = knn_model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred) * 100
 
-    predicted_disease = label_encoders['Disease'].inverse_transform(prediction)[0]
+    prediction = knn_model.predict(input_scaled)
+    probs = knn_model.predict_proba(input_scaled)
+    confidence = probs.max() * 100
+
+    predicted_disease = label_encoder.inverse_transform(prediction)[0]
 
     return {
         "Predicted Disease": predicted_disease,
         "Confidence": round(confidence, 2),
         "Model Accuracy": round(acc, 2),
+        "Best Params": grid.best_params_
     }
